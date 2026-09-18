@@ -30,13 +30,19 @@ bin/swe2-dispatch.sh --workspace <linked worktree> --brief <task file> --out <ru
 
 ## What it enforces
 
-Confinement is structural, not advisory. The script refuses to dispatch unless `--workspace` is the **root of a linked git worktree** — a primary or shared checkout is rejected, because a linked worktree has a `.git` *file* while a primary checkout has a `.git` *directory*.
+Confinement is structural, not advisory. The script refuses to dispatch unless `--workspace` is the root of a **linked git worktree**, verified by requiring its git dir to be `<common-dir>/worktrees/<name>`. Checking only that `.git` is a *file* is not sufficient — a submodule's `.git` is also a file, pointing at a complete git directory that would then be writable and committable. Primary checkouts, submodules, and planted `.git` files are all refused.
 
-The run is then wrapped in a generated seatbelt profile permitting writes only in the worktree, the run directory, that worktree's own git dir, and the agent's own state directories. Everything else is read-only.
+The run is then wrapped in a generated seatbelt profile permitting **writes** only in: the worktree, the run directory, that worktree's own git dir, and the agent's `devin` state directories. Writes anywhere else — including `$TMPDIR`, `~/.cache`, and `$HOME` — are denied by the OS. **Reads are not restricted**, and neither is network access.
 
 A deliberate consequence: the *shared* git common directory is **not** writable, so `git add` and `git commit` fail at the OS level while `git status`, `diff`, and `log` still work. **The worker cannot stage or commit even if it tries.** The dispatching session owns the index.
 
-`--mode dangerous` is always refused.
+Paths interpolated into that profile are rejected if they contain characters that could terminate an S-expression (`"`, `)`, `(`, `\`, `;`, newline), so a crafted `--allow-write` or workspace path cannot widen the grant.
+
+`--mode` is an allowlist: `smart`, `accept-edits`, `auto`. Anything else, including `dangerous` in any casing, is refused.
+
+Change detection uses two independent detectors — mtime against a marker kept **outside** every agent-writable path, plus a `git status` delta — so an agent cannot suppress the "files touched" report, and untracked files it plants are listed separately.
+
+If the run produced no usable trace (no `export.json`, or `jq` missing), the report says `escape check: NOT PERFORMED` with the reason. Silence never reads as a clean result.
 
 ## What it reports
 
