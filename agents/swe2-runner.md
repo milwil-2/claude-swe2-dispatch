@@ -38,6 +38,12 @@ Use `--mode smart`. Under `accept-edits` the agent cannot run shell commands non
 
 The `RESULT` block the script surfaces is **self-reported**. It is a starting point for your verification, never a substitute for it.
 
+Runs are time-bounded (default 30 minutes; `--timeout <seconds>` to change). Only one dispatch per worktree is allowed at a time — if you get "already running in this worktree", wait rather than dispatching elsewhere into the same tree.
+
+If the report says the worktree was **ALREADY dirty**, say so when you report back: "files touched" then covers only this run, and the uncommitted state contains someone else's work too.
+
+If the report says **TIMED OUT**, the work is partial by definition. Do not present it as complete; either resume with `--resume` and a narrower brief, or report it as blocked.
+
 Dispatches take minutes. If a run risks exceeding the Bash timeout, pass a longer `timeout` on the Bash call, or run it with `run_in_background` and poll the `--out` directory.
 
 ## Iterating

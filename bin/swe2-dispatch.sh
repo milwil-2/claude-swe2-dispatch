@@ -6,6 +6,7 @@
 #   swe2-dispatch.sh --workspace <dir> --brief <file> [--model swe-2-max]
 #                    [--mode smart|accept-edits|auto] [--out <dir>] [--resume <id>]
 #                    [--scratch] [--no-sandbox] [--raw] [--allow-write <dir>]...
+#                    [--timeout <seconds>]
 #
 # CONFINEMENT (enforced, not advisory):
 #   * --workspace must be the root of a *linked git worktree*: its git dir must
@@ -46,6 +47,7 @@ RESUME=""
 SCRATCH=0
 SANDBOX=1
 RAW=0
+TIMEOUT=1800
 EXTRA_WRITES=()
 
 die() { echo "swe2-dispatch: $*" >&2; exit 2; }
@@ -72,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --scratch)     SCRATCH=1; shift 1 ;;
     --no-sandbox)  SANDBOX=0; shift 1 ;;
     --raw)         RAW=1;     shift 1 ;;
+    --timeout)     need_val "$@"; TIMEOUT="$2"; shift 2 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -84,6 +87,10 @@ case "$MODE" in
   smart|accept-edits|auto) : ;;
   *) die "--mode must be one of: smart, accept-edits, auto (got '$MODE')" ;;
 esac
+case "$TIMEOUT" in
+  ''|*[!0-9]*) die "--timeout must be a whole number of seconds (got '$TIMEOUT')" ;;
+esac
+[[ "$TIMEOUT" -gt 0 ]] || die "--timeout must be greater than zero"
 
 WORKSPACE="$(cd "$WORKSPACE" && pwd -P)" || die "cannot resolve --workspace"
 safe_for_profile "$WORKSPACE" || die "--workspace path contains characters that cannot be sandboxed safely"
@@ -164,7 +171,23 @@ CTL="${TMPDIR:-/tmp}/.swe2-ctl-$RUN_ID"
 case "$CTL/" in "$WORKSPACE"/*|"$OUT"/*) CTL="/tmp/.swe2-ctl-$RUN_ID" ;; esac
 mkdir -p "$CTL" || exit 2
 chmod 700 "$CTL" 2>/dev/null
-trap 'rm -rf "$CTL"' EXIT INT TERM
+
+# One dispatch per worktree. Two concurrent agents in one tree would interleave
+# edits and make every "what changed" answer meaningless. mkdir is atomic.
+LOCK="${TMPDIR:-/tmp}/.swe2-lock-$(printf '%s' "$WORKSPACE" | cksum | tr -d ' /')"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  OWNER="$(cat "$LOCK/pid" 2>/dev/null)"
+  if [[ -n "$OWNER" ]] && kill -0 "$OWNER" 2>/dev/null; then
+    rm -rf "$CTL"
+    die "another dispatch (pid $OWNER) is already running in this worktree.
+              Wait for it, or dispatch into a different worktree."
+  fi
+  # Stale lock from a killed run: take it over.
+  rm -rf "$LOCK" 2>/dev/null
+  mkdir "$LOCK" 2>/dev/null || { rm -rf "$CTL"; die "cannot acquire the dispatch lock at $LOCK"; }
+fi
+printf '%s' "$$" > "$LOCK/pid"
+trap 'rm -rf "$CTL" "$LOCK"' EXIT INT TERM
 
 # Inventory the tree BEFORE the run. Paths only -- cheap even on a large repo.
 find "$WORKSPACE" -type f -not -path "*/.git/*" -print 2>/dev/null | sort > "$CTL/files.before"
@@ -263,9 +286,21 @@ if [[ "$SANDBOX" == "1" ]]; then
 fi
 
 cd "$WORKSPACE" || exit 2
+# A runaway agent otherwise runs until the caller notices. The watchdog gives it
+# SIGTERM at the deadline and SIGKILL five seconds later.
+STARTED_AT="$(date '+%s')"
 TMPDIR="$PRIVTMP" ${SANDBOX_CMD[@]+"${SANDBOX_CMD[@]}"} "$DEVIN" "${DEVIN_ARGS[@]}" \
-  > "$OUT/answer.txt" 2> "$OUT/stderr.txt"
-STATUS=$?
+  > "$OUT/answer.txt" 2> "$OUT/stderr.txt" &
+AGENT_PID=$!
+( sleep "$TIMEOUT"
+  kill -TERM "$AGENT_PID" 2>/dev/null && { sleep 5; kill -KILL "$AGENT_PID" 2>/dev/null; }
+) >/dev/null 2>&1 &
+WATCHDOG=$!
+wait "$AGENT_PID"; STATUS=$?
+kill "$WATCHDOG" 2>/dev/null; wait "$WATCHDOG" 2>/dev/null
+ELAPSED=$(( $(date '+%s') - STARTED_AT ))
+TIMED_OUT=""
+[[ "$STATUS" -gt 128 && "$ELAPSED" -ge "$TIMEOUT" ]] && TIMED_OUT=1
 
 # ---- Reduce the transcript to something a supervising session can afford ----
 SESSION_ID=""; HAVE_TRACE=0; TRACE_WHY="no export.json was written"
@@ -336,10 +371,23 @@ if [[ "$HAVE_TRACE" == "1" && -s "$OUT/actions.txt" ]]; then
     | sed 's/"file_path":"//; s/"$//' | sort -u \
     | while IFS= read -r fp; do
         case "$fp" in
-          */../*|*/..) echo "$fp" ;;
-          "$WORKSPACE"/*) : ;;
-          /*) echo "$fp" ;;
-          *) echo "$fp   [relative path -- could not be resolved]" ;;
+          */../*|*/..) echo "$fp   [upward traversal]"; continue ;;
+          /*) : ;;
+          *) echo "$fp   [relative path -- could not be resolved]"; continue ;;
+        esac
+        # Normalize before comparing. /var/folders and /private/var/folders name
+        # the same directory on macOS, and an unnormalized compare reports a
+        # perfectly ordinary in-workspace edit as an escape -- a false alarm that
+        # trains the reader to ignore the loudest line in the report.
+        d="$(dirname "$fp")"
+        if [[ -d "$d" ]]; then
+          real="$(cd "$d" 2>/dev/null && pwd -P)/$(basename "$fp")"
+        else
+          real="$fp"
+        fi
+        case "$real" in
+          "$WORKSPACE"/*) ;;
+          *) echo "$fp" ;;
         esac
       done > "$OUT/outside.txt" 2>/dev/null
   [[ -s "$OUT/outside.txt" ]] && ESCAPED=1
@@ -353,7 +401,14 @@ echo "status:     $STATUS"
 echo "model:      $MODEL (mode: $MODE, sandbox: $([[ $SANDBOX == 1 ]] && echo on || echo OFF))"
 echo "workspace:  $WORKSPACE$([[ -s "$OUT/branch" ]] && echo "  [branch: $(cat "$OUT/branch")]")"
 [[ -n "$SESSION_ID" ]] && echo "session_id: $SESSION_ID   (resume: --resume $SESSION_ID)"
-echo "artifacts:  $OUT"
+echo "artifacts:  $OUT   (elapsed: ${ELAPSED}s)"
+if [[ -n "$TIMED_OUT" ]]; then
+  echo "!! TIMED OUT after ${TIMEOUT}s and was killed -- any work below is PARTIAL !!"
+fi
+if [[ "$IS_GIT" == "1" && -s "$CTL/status.before" ]]; then
+  echo "note:       the worktree was ALREADY dirty before this run"
+  echo "            ($(wc -l < "$CTL/status.before" | tr -d ' ') pre-existing entries; 'files touched' below covers only this run)"
+fi
 if [[ -s "$OUT/metrics.json" ]]; then echo "--- metrics ---"; cat "$OUT/metrics.json"; fi
 if [[ -s "$OUT/tools.txt" ]]; then echo "--- tool calls ---"; head -20 "$OUT/tools.txt"; fi
 

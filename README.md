@@ -52,6 +52,23 @@ Change detection is computed outside the sandbox from state the agent cannot for
 
 If the run produced no usable trace (no `export.json`, or `jq` missing), the report says `escape check: NOT PERFORMED` with the reason. Silence never reads as a clean result.
 
+## Orchestration safety
+
+- **One dispatch per worktree**, enforced with an atomic lock. Two concurrent agents in one tree would interleave edits and make every "what changed" answer meaningless. A lock whose owning process is gone is taken over automatically.
+- **Every run is time-bounded** (`--timeout`, default 30 minutes). A run that hits the deadline is killed and the report says `!! TIMED OUT ... any work below is PARTIAL !!` rather than presenting a truncated result as finished.
+- **A worktree that was already dirty is disclosed** at the top of the report, with the count of pre-existing entries, so "files touched" is never read as "everything that is uncommitted here".
+
+## Tests
+
+```
+tests/run-tests.sh            # all
+tests/run-tests.sh sandbox    # just the cases matching 'sandbox'
+```
+
+46 cases, no network and no cost — they drive the script with stub agents via `DEVIN_BIN`. Every case corresponds to a defect an independent reviewer found and reproduced, including the hostile-agent ones: backdating planted files, a self-ignoring `.gitignore`, `git update-index --assume-unchanged`, `GIT_DIR` guard bypass, profile injection, and upward traversal in the trace.
+
+Run them before changing `bin/swe2-dispatch.sh`. Two rounds of review fixes were defeated by the next reviewer; these exist so that cannot happen quietly again.
+
 ## What it reports
 
 `stdout` stays small so the transcript never floods the calling session's context:
@@ -103,4 +120,5 @@ These are measured, not hypothetical.
 | `--allow-write <dir>` | Extra writable subpath. Repeatable. |
 | `--scratch` | Permit a non-git directory, only under the temp root. |
 | `--raw` | Send the brief unwrapped. |
+| `--timeout <s>` | Wall-clock bound on the agent, default 1800. SIGTERM at the deadline, SIGKILL five seconds later. |
 | `--no-sandbox` | Dispatch unconfined. Avoid. |
