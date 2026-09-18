@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "swe2-dispatch-marketplace",
+  "description": "Dispatch bounded tasks to an external SWE-2 agent from a Claude Code session, confined to a task-owned git worktree.",
+  "owner": {
+    "name": "milwil-2"
+  },
+  "plugins": [
+    {
+      "name": "swe2-dispatch",
+      "description": "Hand a bounded implementation task to an external SWE-2 agent (Cognition's devin CLI) running inside a task-owned git worktree under a seatbelt profile, and collect a compact, verifiable result. The worker cannot stage, commit, or write outside the worktree.",
+      "category": "orchestration",
+      "source": "./"
+    }
+  ]
+}
