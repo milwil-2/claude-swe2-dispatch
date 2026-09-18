@@ -1,0 +1,18 @@
+{
+  "name": "swe2-dispatch",
+  "version": "0.1.0",
+  "description": "Dispatch bounded implementation tasks to an external SWE-2 coding agent (Cognition's `devin` CLI) from a Claude Code session, and collect a compact, verifiable result. The agent runs inside a task-owned git worktree under a macOS seatbelt profile that permits writes only in that worktree, so it structurally cannot stage, commit, or touch anything outside it. The dispatching session keeps ownership of integration, review, and git.",
+  "author": {
+    "name": "milwil-2"
+  },
+  "keywords": [
+    "swe-2",
+    "devin",
+    "cognition",
+    "external-agent",
+    "delegation",
+    "worktree",
+    "sandbox",
+    "orchestration"
+  ]
+}
