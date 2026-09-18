@@ -92,6 +92,30 @@ done
 [[ -n "$WORKSPACE" ]] || die "--workspace is required"
 [[ -d "$WORKSPACE" ]] || die "--workspace must be an existing directory"
 [[ -f "$BRIEF"     ]] || die "--brief must be an existing file"
+
+# The brief is the dominant quality lever. Adding explicit expectations and
+# constraints moved "did not regress previously-passing tests outside the change
+# scope" from 7.8% to 88.1% in a controlled ablation, while barely changing
+# whether the task got done at all. Requiring the sections is the only way the
+# lever does not get quietly skipped on a busy day.
+if [[ "$RAW" != "1" ]]; then
+  MISSING=""
+  for sec in Goal Expectations Constraints "Out of scope" "Files in scope" Acceptance; do
+    grep -qiE "^[[:space:]]*(#+[[:space:]]*)?${sec}[[:space:]]*:?[[:space:]]*$|^[[:space:]]*(#+[[:space:]]*)?${sec}[[:space:]]*:" "$BRIEF" \
+      || MISSING="$MISSING
+              - $sec"
+  done
+  if [[ -n "$MISSING" ]]; then
+    die "the brief is missing required sections:$MISSING
+
+              A brief must state what 'done' means before the agent starts. Add each
+              section as a heading or 'Name:' line. Out of scope is the one that buys
+              the most -- it is what keeps the agent from touching unrelated code.
+              Acceptance must name the exact command that proves success.
+
+              Use --raw only for a throwaway dispatch where none of this matters."
+  fi
+fi
 case "$MODE" in smart|accept-edits|auto) : ;;
   *) die "--mode must be one of: smart, accept-edits, auto (got '$MODE')" ;; esac
 case "$TIMEOUT" in ''|*[!0-9]*) die "--timeout must be a whole number of seconds (got '$TIMEOUT')" ;; esac
@@ -235,6 +259,7 @@ if [[ "$RAW" != "1" ]]; then
     echo "End your final message with exactly this block, and nothing after it:"
     echo
     echo "RESULT"
+    echo "reasoning: <one line: what you actually did and why you believe it works>"
     echo "status: done | partial | blocked | infeasible"
     echo "files: <comma-separated paths you changed, relative to the worktree, or none>"
     echo "verified: <the exact command you ran to check your work and its real outcome, or 'not run'>"

@@ -32,7 +32,22 @@ The script prints a compact report: exit status, `session_id`, token metrics, to
 
 **Never cat `export.json` into your context** — it is ~100KB even for a trivial run. Query it with `jq` when you need a detail.
 
-The script composes the brief for you: it prepends the standing constraints (stay in the worktree, do not commit, no unrelated refactors, never weaken a test, report honestly) and appends a required `RESULT` block. So your `--brief` file holds **only the task**. Write it to name the files that may change, the acceptance criteria, and — this matters most — **the exact command that proves success**, since SWE-2 will run it and report the real outcome. Do not use `--raw`; it drops the constraints and the output contract.
+**You write the brief, and the script refuses one that is not structured.** It must contain these six sections, as headings or `Name:` lines:
+
+```
+## Goal            one sentence
+## Expectations    the observable behavior once this is done
+## Constraints     what must NOT change
+## Out of scope    state it explicitly -- this is the section that keeps the agent out of unrelated code
+## Files in scope  the files it may change
+## Acceptance      the exact command that proves success
+```
+
+This is not ceremony. In a controlled ablation, adding explicit expectations and constraints moved "did not regress previously-passing tests outside the change scope" from 7.8% to 88.1%, while barely changing whether the task got done. Writing the brief properly is the highest-leverage thing you do.
+
+Two limits. Do not paste an entire test suite into the brief -- given the full oracle, agents optimise against it and produce hollow work that scores nearly perfectly. Name the acceptance command instead. And do not pad: instruction adherence degrades sharply as the count grows, and the failures are silent omissions, so every sentence you add costs adherence to the ones already there.
+
+The script composes the rest: it prepends the standing constraints (stay in the worktree, do not commit, no unrelated refactors, never weaken a test, report honestly) and appends a required `RESULT` block. So your `--brief` file holds **only the task**. Write it to name the files that may change, the acceptance criteria, and — this matters most — **the exact command that proves success**, since SWE-2 will run it and report the real outcome. Do not use `--raw`; it drops the constraints and the output contract.
 
 Use `--mode smart`. Under `accept-edits` the agent cannot run shell commands non-interactively, so it cannot run tests and the run dies on its first compound command.
 

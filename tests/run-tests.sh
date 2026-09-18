@@ -54,7 +54,23 @@ stub() {  # stub <name> <body> -> echoes path to an executable stub agent
   chmod +x "$f"; echo "$f"
 }
 
-BRIEF="$LAB/brief.md"; echo "do the thing" > "$BRIEF"
+# A structured brief: the wrapper now refuses one without the six sections.
+BRIEF="$LAB/brief.md"
+cat > "$BRIEF" <<'BRIEFEOF'
+## Goal
+Do the thing.
+## Expectations
+The thing is done.
+## Constraints
+Change nothing else.
+## Out of scope
+Everything else.
+## Files in scope
+m.py
+## Acceptance
+true
+BRIEFEOF
+BARE_BRIEF="$LAB/bare.md"; echo "just fix it" > "$BARE_BRIEF"
 [[ -x "$DISPATCH" ]] || { red "dispatch script not executable: $DISPATCH"; exit 1; }
 
 echo "swe2-dispatch regression suite"
@@ -264,6 +280,67 @@ EOS
 )"
   out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o6" 2>&1)"
   want_not "stale/previous run's escape report not reused" "PATHS TOUCHED OUTSIDE WORKSPACE" "$out"
+fi
+
+# ============================ BRIEF QUALITY ==================================
+echo
+echo "Brief structure (the dominant quality lever)"
+
+if match brief/requires-sections; then
+  out="$("$DISPATCH" --workspace "$WT" --brief "$BARE_BRIEF" --out "$LAB/b1" 2>&1)"
+  want "brief/unstructured brief is refused" "missing required sections" "$out"
+  for sec in "Goal" "Expectations" "Constraints" "Out of scope" "Files in scope" "Acceptance"; do
+    want "brief/names the missing section: $sec" "- $sec" "$out"
+  done
+fi
+
+if match brief/partial; then
+  cat > "$LAB/partial.md" <<'EOS'
+## Goal
+Fix it.
+## Expectations
+It works.
+## Constraints
+None.
+## Files in scope
+m.py
+## Acceptance
+true
+EOS
+  out="$("$DISPATCH" --workspace "$WT" --brief "$LAB/partial.md" --out "$LAB/b2" 2>&1)"
+  want     "brief/a brief missing only 'Out of scope' is still refused" "Out of scope" "$out"
+  want_not "brief/does not complain about sections that are present"   "- Goal"       "$out"
+fi
+
+if match brief/structured-passes; then
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/b3" 2>&1)"
+  want "brief/structured brief dispatches" "=== swe2 run" "$out"
+fi
+
+if match brief/raw-bypass; then
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BARE_BRIEF" --out "$LAB/b4" --raw 2>&1)"
+  want "brief/--raw bypasses the structure gate" "=== swe2 run" "$out"
+fi
+
+if match brief/constraints-first; then
+  DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/b5" >/dev/null 2>&1
+  sent="$LAB/b5/brief.sent.md"
+  if [[ -s "$sent" ]]; then
+    # Adherence degrades with instruction count and fails by omission, so the
+    # non-negotiables must precede the task, not trail it.
+    cpos=$(grep -n 'Standing constraints' "$sent" | head -1 | cut -d: -f1)
+    tpos=$(grep -n '^## Task' "$sent" | head -1 | cut -d: -f1)
+    [[ -n "$cpos" && -n "$tpos" && "$cpos" -lt "$tpos" ]] \
+      && ok "brief/standing constraints precede the task" \
+      || bad "brief/standing constraints precede the task" "constraints@$cpos task@$tpos"
+    n=$(grep -c '^- ' "$sent")
+    [[ "$n" -le 10 ]] && ok "brief/standing constraint count stays small ($n)" \
+                      || bad "brief/standing constraint count stays small" "$n constraints; adherence degrades as this grows"
+    want "brief/RESULT contract gives reasoning a home" "reasoning:" "$(cat "$sent")"
+    want "brief/infeasible remains a first-class outcome" "infeasible" "$(cat "$sent")"
+  else
+    bad "brief/composed brief written" "no brief.sent.md at $sent"
+  fi
 fi
 
 # ==================== PROPERTY: A DIRTY RUN IS NEVER REPORTED CLEAN ==========

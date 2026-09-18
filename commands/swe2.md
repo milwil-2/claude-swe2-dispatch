@@ -12,7 +12,7 @@ Do it in this order.
 
 2. **Check the toolchain is already installed in that worktree.** SWE-2 cannot install packages: in non-interactive mode `devin` rejects any command needing confirmation, and this plugin refuses `--mode dangerous`. If dependencies are missing (no `node_modules`, no test runner), install them yourself *before* dispatching, or SWE-2 will make changes it cannot verify.
 
-3. **Write the brief to a file.** Include only the task itself — the script prepends the standing constraints and appends the required `RESULT` block. Name the files SWE-2 may change, the acceptance criteria, and above all **the exact command that proves success**, since it will run that command and report the real outcome.
+3. **Write a structured brief to a file.** The script refuses anything missing these six sections (as headings or `Name:` lines): **Goal, Expectations, Constraints, Out of scope, Files in scope, Acceptance**. Take them seriously — explicit expectations and constraints moved "did not break previously-passing tests outside scope" from 7.8% to 88.1% in a controlled ablation. `Out of scope` earns the most; `Acceptance` must name the exact command that proves success. Do not paste a whole test suite in — agents optimise against a visible oracle and produce hollow work. The script prepends the standing constraints and appends the `RESULT` contract.
 
 4. **Dispatch:**
 
