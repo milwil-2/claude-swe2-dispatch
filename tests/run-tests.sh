@@ -81,19 +81,19 @@ echo "Worktree guard"
 MAIN="$(new_repo main)"; WT="$(new_worktree "$MAIN" wt)"
 
 if match guard/primary-checkout; then
-  out="$("$DISPATCH" --workspace "$MAIN" --brief "$BRIEF" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$MAIN" --brief "$BRIEF" 2>&1)"
   want "guard/primary-checkout refused" "not a linked git worktree" "$out"
 fi
 
 if match guard/subdirectory; then
   mkdir -p "$WT/sub"
-  out="$("$DISPATCH" --workspace "$WT/sub" --brief "$BRIEF" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT/sub" --brief "$BRIEF" 2>&1)"
   want "guard/subdirectory refused" "worktree ROOT" "$out"
 fi
 
 if match guard/non-git; then
   mkdir -p "$LAB/plain"
-  out="$("$DISPATCH" --workspace "$LAB/plain" --brief "$BRIEF" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$LAB/plain" --brief "$BRIEF" 2>&1)"
   want "guard/non-git refused without --scratch" "not a git worktree" "$out"
 fi
 
@@ -102,7 +102,7 @@ if match guard/submodule; then
   ( cd "$MAIN" && git -c protocol.file.allow=always submodule add -q "$SMSRC" sm 2>/dev/null \
       && git -c user.email=t@t -c user.name=t commit -qm sub 2>/dev/null ) >/dev/null 2>&1
   if [[ -d "$MAIN/sm" ]]; then
-    out="$("$DISPATCH" --workspace "$MAIN/sm" --brief "$BRIEF" 2>&1)"
+    out="$("$DISPATCH" --verify false --workspace "$MAIN/sm" --brief "$BRIEF" 2>&1)"
     want "guard/submodule refused (its git dir is complete and committable)" "not a linked git worktree" "$out"
   else
     skip "guard/submodule refused" "submodule fixture unavailable"
@@ -111,18 +111,18 @@ fi
 
 if match guard/planted-gitfile; then
   mkdir -p "$LAB/fake"; echo "gitdir: $MAIN/.git" > "$LAB/fake/.git"
-  out="$("$DISPATCH" --workspace "$LAB/fake" --brief "$BRIEF" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$LAB/fake" --brief "$BRIEF" 2>&1)"
   want "guard/planted .git file refused" "not a linked git worktree" "$out"
 fi
 
 if match guard/env-bypass; then
   out="$(GIT_DIR="$MAIN/.git/worktrees/wt" GIT_WORK_TREE="$MAIN" \
-         "$DISPATCH" --workspace "$MAIN" --brief "$BRIEF" 2>&1)"
+         "$DISPATCH" --verify false --workspace "$MAIN" --brief "$BRIEF" 2>&1)"
   want "guard/GIT_DIR env bypass refused" "not a linked git worktree" "$out"
 fi
 
 if match guard/accepts-linked; then
-  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o1" 2>&1)"
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o1" 2>&1)"
   want "guard/genuine linked worktree accepted" "=== swe2 run" "$out"
 fi
 
@@ -132,28 +132,28 @@ echo "Argument handling"
 
 if match args/mode-allowlist; then
   for m in dangerous DANGEROUS bogus; do
-    out="$("$DISPATCH" --workspace "$WT" --brief "$BRIEF" --mode "$m" 2>&1)"
+    out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --mode "$m" 2>&1)"
     want "args/--mode $m refused" "--mode must be one of" "$out"
   done
 fi
 
 if match args/missing-value; then
-  out="$("$DISPATCH" --workspace 2>&1)"; rc=$?
+  out="$("$DISPATCH" --verify false --workspace 2>&1)"; rc=$?
   want "args/missing option value message" "requires a value" "$out"
   [[ $rc -eq 2 ]] && ok "args/missing option value exits 2" || bad "args/missing option value exits 2" "got $rc"
 fi
 
 if match args/out-inside-workspace; then
-  out="$("$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$WT/runs" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$WT/runs" 2>&1)"
   want "args/--out inside workspace refused" "must not be inside the workspace" "$out"
 fi
 
 if match args/allow-write-injection; then
   inj='foo")(subpath "/Users'
   mkdir -p "$LAB/$inj" 2>/dev/null
-  out="$("$DISPATCH" --workspace "$WT" --brief "$BRIEF" --allow-write "$LAB/$inj" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --allow-write "$LAB/$inj" 2>&1)"
   want "args/--allow-write injection (existing path) refused" "cannot be sandboxed safely" "$out"
-  out="$("$DISPATCH" --workspace "$WT" --brief "$BRIEF" --allow-write '/nope")(subpath "/Users' 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --allow-write '/nope")(subpath "/Users' 2>&1)"
   want "args/--allow-write injection (nonexistent path) refused" "cannot be sandboxed safely" "$out"
 fi
 
@@ -171,7 +171,7 @@ touch -t 200001010000 backdoor.py .gitignore m.py
 echo "All done, nothing to report."
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o2" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o2" 2>&1)"
   want "detect/planted file survives backdating + self-ignoring .gitignore" "backdoor.py" "$out"
   want "detect/.gitignore itself reported"                                  ".gitignore"  "$out"
   want "detect/edited tracked file survives backdating"                     "m.py"        "$out"
@@ -185,7 +185,7 @@ rm -f m.py
 echo done
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o3" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o3" 2>&1)"
   want "detect/deletion reported" "DELETED   m.py" "$out"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null )
 fi
@@ -195,7 +195,7 @@ if match detect/clean-run; then
 echo "did nothing"
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o4" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o4" 2>&1)"
   want "detect/genuinely clean run reports (none)" "(none)" "$out"
 fi
 
@@ -204,7 +204,7 @@ echo
 echo "Sandbox confinement"
 
 if match sandbox/profile; then
-  DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o5" >/dev/null 2>&1
+  DEVIN_BIN=/usr/bin/true "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o5" >/dev/null 2>&1
   PROF="$LAB/o5/sandbox.sb"
   if [[ ! -s "$PROF" ]]; then
     bad "sandbox/profile generated" "no sandbox.sb at $PROF"
@@ -243,7 +243,7 @@ JSON
 echo done
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o6" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o6" 2>&1)"
   want "escape/upward traversal flagged" "PATHS TOUCHED OUTSIDE WORKSPACE" "$out"
 fi
 
@@ -252,7 +252,7 @@ if match escape/no-trace; then
 echo "no export written"
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o7" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o7" 2>&1)"
   want "escape/missing trace stated explicitly" "NOT PERFORMED" "$out"
 fi
 
@@ -264,7 +264,7 @@ JSON
 echo done
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o8" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o8" 2>&1)"
   want     "escape/in-workspace path not flagged" "escape check: performed" "$out"
   want_not "escape/no false alarm on normal edit" "PATHS TOUCHED OUTSIDE"   "$out"
 fi
@@ -278,7 +278,7 @@ if match stale/reused-out; then
 echo "second run"
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o6" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o6" 2>&1)"
   want_not "stale/previous run's escape report not reused" "PATHS TOUCHED OUTSIDE WORKSPACE" "$out"
 fi
 
@@ -287,7 +287,7 @@ echo
 echo "Brief structure (the dominant quality lever)"
 
 if match brief/requires-sections; then
-  out="$("$DISPATCH" --workspace "$WT" --brief "$BARE_BRIEF" --out "$LAB/b1" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$BARE_BRIEF" --out "$LAB/b1" 2>&1)"
   want "brief/unstructured brief is refused" "missing required sections" "$out"
   for sec in "Goal" "Expectations" "Constraints" "Out of scope" "Files in scope" "Acceptance"; do
     want "brief/names the missing section: $sec" "- $sec" "$out"
@@ -307,13 +307,13 @@ m.py
 ## Acceptance
 true
 EOS
-  out="$("$DISPATCH" --workspace "$WT" --brief "$LAB/partial.md" --out "$LAB/b2" 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$LAB/partial.md" --out "$LAB/b2" 2>&1)"
   want     "brief/a brief missing only 'Out of scope' is still refused" "Out of scope" "$out"
   want_not "brief/does not complain about sections that are present"   "- Goal"       "$out"
 fi
 
 if match brief/structured-passes; then
-  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/b3" 2>&1)"
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/b3" 2>&1)"
   want "brief/structured brief dispatches" "=== swe2 run" "$out"
 fi
 
@@ -323,7 +323,7 @@ if match brief/raw-bypass; then
 fi
 
 if match brief/constraints-first; then
-  DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/b5" >/dev/null 2>&1
+  DEVIN_BIN=/usr/bin/true "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/b5" >/dev/null 2>&1
   sent="$LAB/b5/brief.sent.md"
   if [[ -s "$sent" ]]; then
     # Adherence degrades with instruction count and fails by omission, so the
@@ -353,7 +353,7 @@ echo "Property: a run that plants a file never reports (none)"
 plant_and_check() {  # plant_and_check <case-name> <stub-body-file>
   local name="$1" body="$2" out
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f backdoor.py .gitignore decoy.py secrets_link.py )
-  out="$(DEVIN_BIN="$body" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-$name" ${3:-} 2>&1)"
+  out="$(DEVIN_BIN="$body" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-$name" ${3:-} 2>&1)"
   want_not "property/$name does not report a clean tree" "(none)" "$out"
   want     "property/$name names the planted file"       "backdoor.py" "$out"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f backdoor.py .gitignore decoy.py secrets_link.py )
@@ -383,7 +383,7 @@ echo done
 EOS
 )"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f backdoor.py )
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-detach" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-detach" 2>&1)"
   sleep 5
   if [[ -e "$WT/backdoor.py" ]]; then
     want "property/detached-writer plant is reported or prevented" "backdoor.py" "$out"
@@ -412,7 +412,7 @@ EOS
   # refuses an --out inside a granted path.
   POUT="$(mktemp -d /private/tmp/swe2-pout.XXXXXX)"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f backdoor.py .gitignore )
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" \
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" \
          --out "$POUT" --allow-write "${TMPDIR:-/tmp}" 2>&1)"
   want_not "property/poisoned-baseline does not report a clean tree" "(none)" "$out"
   want     "property/poisoned-baseline names the planted file" "backdoor.py" "$out"
@@ -433,7 +433,7 @@ echo done
 EOS
 )"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f backdoor.py .gitignore secrets_link.py )
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-sym" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-sym" 2>&1)"
   want "property/symlink plant is reported" "secrets_link.py" "$out"
   ( cd "$WT" && rm -f backdoor.py .gitignore secrets_link.py )
 fi
@@ -447,7 +447,7 @@ echo done
 EOS
 )"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f backdoor.py )
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-forge" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-forge" 2>&1)"
   want "property/forged-annotation file still reported" "backdoor.py" "$out"
   # The real annotation is a prefix, so an impersonating filename cannot occupy it.
   want_not "property/filename cannot impersonate the DELETED annotation" "DELETED   decoy.py" "$out"
@@ -468,7 +468,7 @@ echo done
 EOS
 )"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f backdoor.py )
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-inject" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-inject" 2>&1)"
   want     "property/report-injection plant still reported" "backdoor.py" "$out"
   want_not "property/forged section not emitted"            "escape check: performed
 " "$out"
@@ -486,10 +486,201 @@ echo done
 EOS
 )"
   ( cd "$WT" && rm -rf .claude .devin )
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-hooks" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/p-hooks" 2>&1)"
   want "property/planted hook files raise a dedicated alarm" "AGENT-EXECUTABLE HOOK FILES" "$out"
   want "property/the planted .claude/settings.json is named" ".claude/settings.json" "$out"
   ( cd "$WT" && rm -rf .claude .devin )
+fi
+
+# ============================ VERIFICATION ===================================
+echo
+echo "Verification by execution (the agent's claim is a hypothesis)"
+
+# A fixture whose acceptance genuinely fails first and can be gamed by editing the test.
+VWT=""
+if match verify; then
+  VMAIN="$(new_repo vmain)"
+  printf 'def div(a, b):\n    return a * b\n' > "$VMAIN/calc.py"
+  cat > "$VMAIN/test_calc.py" <<'EOS'
+from calc import div
+def test_div():
+    assert div(10, 2) == 5.0
+EOS
+  ( cd "$VMAIN" && git add -A && git -c user.email=t@t -c user.name=t commit -qm calc ) >/dev/null 2>&1
+  VWT="$(new_worktree "$VMAIN" vwt)"
+  VCMD='python3 -c "import test_calc; test_calc.test_div()"'
+  cat > "$LAB/vbrief.md" <<'EOS'
+## Goal
+Fix div.
+## Expectations
+div(10,2)==5.0
+## Constraints
+Keep signature.
+## Out of scope
+test_calc.py
+## Files in scope
+calc.py
+## Acceptance
+python3 -c "import test_calc; test_calc.test_div()"
+EOS
+  reset_v() { ( cd "$VWT" && git checkout -q -- . 2>/dev/null; rm -rf __pycache__ ); }
+fi
+
+if match verify/required; then
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/v0" 2>&1)"
+  want "verify/dispatch without an acceptance command is refused" "--verify <command> is required" "$out"
+fi
+
+if match verify/red-gate; then
+  reset_v
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/v1" --verify true 2>&1)"
+  want "verify/refuses when acceptance already passes" "already passes before the agent" "$out"
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/v2" --verify true --verify-may-pass 2>&1)"
+  want "verify/--verify-may-pass allows a green baseline" "=== swe2 run" "$out"
+fi
+
+if match verify/verdicts; then
+  S_FIX="$(stub fix <<'EOS'
+sed -i '' 's|return a \* b|return a / b|' calc.py
+echo done
+EOS
+)"
+  S_NOOP="$(stub nofix <<'EOS'
+echo "I did not change anything"
+EOS
+)"
+  S_CHEAT="$(stub cheat <<'EOS'
+cat > test_calc.py <<'T'
+from calc import div
+def test_div():
+    assert div(10, 2) == 20
+T
+echo done
+EOS
+)"
+  reset_v
+  out="$(DEVIN_BIN="$S_FIX" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/v3" --verify "$VCMD" --protect 'test_*.py' 2>&1)"
+  want "verify/honest fix is VERIFIED" "VERIFIED" "$out"
+  reset_v
+  out="$(DEVIN_BIN="$S_NOOP" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/v4" --verify "$VCMD" --protect 'test_*.py' 2>&1)"
+  want "verify/unfixed run is NOT VERIFIED" "NOT VERIFIED" "$out"
+  reset_v
+  out="$(DEVIN_BIN="$S_CHEAT" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/v5" --verify "$VCMD" --protect 'test_*.py' 2>&1)"
+  want     "verify/editing the test to pass is caught as GAMED" "GAMED" "$out"
+  want_not "verify/a gamed run is never called VERIFIED outright" "^VERIFIED" "$out"
+  reset_v
+fi
+
+if match verify/regress; then
+  S_FIX2="$(stub fix2 <<'EOS'
+sed -i '' 's|return a \* b|return a / b|' calc.py
+echo done
+EOS
+)"
+  reset_v
+  out="$(DEVIN_BIN="$S_FIX2" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/v6" \
+         --verify "$VCMD" --regress 'false' --protect 'test_*.py' 2>&1)"
+  want "verify/a regression command that never passed is not reported as a regression" "VERIFIED" "$out"
+  reset_v
+fi
+
+# ============================ SCOPE, SIZE, SIGNALS ===========================
+echo
+echo "Scope, size and quality signals"
+
+if match scope/violation; then
+  S_WIDE="$(stub wide <<'EOS'
+sed -i '' 's|return a \* b|return a / b|' calc.py
+echo "extra" > unrelated.py
+echo done
+EOS
+)"
+  reset_v
+  out="$(DEVIN_BIN="$S_WIDE" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/s1" \
+         --verify "$VCMD" --scope 'calc.py' --protect 'test_*.py' 2>&1)"
+  want "scope/a file outside the declared scope is flagged" "CHANGED OUTSIDE DECLARED SCOPE" "$out"
+  want "scope/the offending file is named" "unrelated.py" "$out"
+  reset_v; rm -f "$VWT/unrelated.py"
+fi
+
+if match size/tripwire; then
+  S_FIX3="$(stub fix3 <<'EOS'
+sed -i '' 's|return a \* b|return a / b|' calc.py
+echo done
+EOS
+)"
+  reset_v
+  out="$(DEVIN_BIN="$S_FIX3" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/s2" \
+         --verify "$VCMD" --max-lines 1 --protect 'test_*.py' 2>&1)"
+  want "size/tripwire fires past the budget" "size tripwire" "$out"
+  want "size/a breached budget still verifies (flag, never reject)" "VERIFIED" "$out"
+  reset_v
+fi
+
+if match signals/protected; then
+  S_TOUCH="$(stub touchtest <<'EOS'
+sed -i '' 's|return a \* b|return a / b|' calc.py
+echo "# note" >> test_calc.py
+echo done
+EOS
+)"
+  reset_v
+  out="$(DEVIN_BIN="$S_TOUCH" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/s3" \
+         --verify "$VCMD" --protect 'test_*.py' 2>&1)"
+  want "signals/touching a protected path is surfaced" "protected path touched" "$out"
+  reset_v
+fi
+
+# ============================ SIMPLIFY =======================================
+echo
+echo "Post-hoc simplification"
+
+if match simplify/reverts; then
+  S_FIX4="$(stub fix4 <<'EOS'
+sed -i '' 's|return a \* b|return a / b|' calc.py
+echo done
+EOS
+)"
+  reset_v
+  # A "simplifier" that breaks behavior must be undone, not shipped.
+  out="$(DEVIN_BIN="$S_FIX4" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/p1" \
+         --verify "$VCMD" --protect 'test_*.py' \
+         --simplify "printf 'def div(a, b):\n    return 0\n' > calc.py" 2>&1)"
+  want "simplify/a behavior-changing simplification is reverted" "reverted" "$out"
+  if grep -q 'return a / b' "$VWT/calc.py" 2>/dev/null; then
+    ok "simplify/the verified diff is restored on the disk"
+  else
+    bad "simplify/the verified diff is restored on the disk" "calc.py: $(cat "$VWT/calc.py" 2>/dev/null | tr '\n' ' ')"
+  fi
+  reset_v
+  out="$(DEVIN_BIN="$S_FIX4" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/p2" \
+         --verify "$VCMD" --protect 'test_*.py' --simplify "true" 2>&1)"
+  want "simplify/a behavior-preserving pass is kept" "simplify pass: kept" "$out"
+  reset_v
+fi
+
+# ============================ BEST-OF-N ======================================
+echo
+echo "Best-of-N"
+
+if match attempts; then
+  S_FIX5="$(stub fix5 <<'EOS'
+sed -i '' 's|return a \* b|return a / b|' calc.py
+echo done
+EOS
+)"
+  out="$(DEVIN_BIN="$S_FIX5" "$DISPATCH" --workspace "$VMAIN" --brief "$LAB/vbrief.md" --out "$LAB/n1" \
+         --attempts 2 --verify "$VCMD" --protect 'test_*.py' 2>&1)"
+  want "attempts/runs the requested number"        "attempt 2" "$out"
+  want "attempts/reports a winner"                 "winner (VERIFIED" "$out"
+  want "attempts/quoted --verify survives the rebuild" "VERIFIED" "$out"
+
+  out="$(DEVIN_BIN="$(stub nofix2 <<'EOS'
+echo "did nothing"
+EOS
+)" "$DISPATCH" --workspace "$VMAIN" --brief "$LAB/vbrief.md" --out "$LAB/n2" \
+         --attempts 2 --verify "$VCMD" --protect 'test_*.py' 2>&1)"
+  want "attempts/0-of-N is reported as one task-level failure" "NO attempt verified" "$out"
 fi
 
 # ============================ ORCHESTRATION SAFETY ===========================
@@ -502,7 +693,7 @@ sleep 120
 EOS
 )"
   start=$(date '+%s')
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/t1" --timeout 3 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/t1" --timeout 3 2>&1)"
   elapsed=$(( $(date '+%s') - start ))
   want "orch/runaway agent is killed at the deadline" "TIMED OUT" "$out"
   [[ "$elapsed" -lt 60 ]] && ok "orch/timeout actually bounds wall clock (${elapsed}s)" \
@@ -510,9 +701,9 @@ EOS
 fi
 
 if match orch/timeout-validation; then
-  out="$("$DISPATCH" --workspace "$WT" --brief "$BRIEF" --timeout abc 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --timeout abc 2>&1)"
   want "orch/--timeout rejects non-numeric" "whole number of seconds" "$out"
-  out="$("$DISPATCH" --workspace "$WT" --brief "$BRIEF" --timeout 0 2>&1)"
+  out="$("$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --timeout 0 2>&1)"
   want "orch/--timeout rejects zero" "greater than zero" "$out"
 fi
 
@@ -521,13 +712,13 @@ if match orch/concurrency; then
 sleep 8
 EOS
 )"
-  DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/c1" >/dev/null 2>&1 &
+  DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/c1" >/dev/null 2>&1 &
   first=$!
   sleep 2
-  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/c2" 2>&1)"
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/c2" 2>&1)"
   want "orch/second dispatch into the same worktree is refused" "already running in this worktree" "$out"
   wait $first 2>/dev/null
-  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/c3" 2>&1)"
+  out="$(DEVIN_BIN=/usr/bin/true "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/c3" 2>&1)"
   want "orch/lock is released when the run finishes" "=== swe2 run" "$out"
 fi
 
@@ -538,7 +729,7 @@ echo "x" > newfile.txt
 echo done
 EOS
 )"
-  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/d1" 2>&1)"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/d1" 2>&1)"
   want "orch/pre-existing dirt is disclosed" "ALREADY dirty" "$out"
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f newfile.txt )
 fi
@@ -549,9 +740,9 @@ echo "Shell compatibility"
 
 if match shell/bash32; then
   if [[ -x /bin/bash ]]; then
-    /bin/bash -n "$DISPATCH" 2>/dev/null && ok "shell/parses under $(/bin/bash --version | head -1 | sed 's/.*version //;s/ .*//')" \
+    /bin/bash -n "$DISPATCH" --verify false 2>/dev/null && ok "shell/parses under $(/bin/bash --version | head -1 | sed 's/.*version //;s/ .*//')" \
       || bad "shell/parses under stock /bin/bash"
-    out="$(DEVIN_BIN=/usr/bin/true /bin/bash "$DISPATCH" --workspace "$WT" --brief "$BRIEF" --out "$LAB/o9" --no-sandbox 2>&1)"
+    out="$(DEVIN_BIN=/usr/bin/true /bin/bash "$DISPATCH" --verify false --workspace "$WT" --brief "$BRIEF" --out "$LAB/o9" --no-sandbox 2>&1)"
     want_not "shell/--no-sandbox has no unbound-variable abort under bash 3.2" "unbound variable" "$out"
   else
     skip "shell/bash32" "/bin/bash not present"

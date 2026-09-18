@@ -52,6 +52,60 @@ Change detection is computed outside the sandbox from state the agent cannot for
 
 If the run produced no usable trace (no `export.json`, or `jq` missing), the report says `escape check: NOT PERFORMED` with the reason. Silence never reads as a clean result.
 
+## Verification
+
+**`--verify` is required.** The agent's `RESULT` block is self-reported, and across
+~11,800 measured trajectories "claims done, ground truth disagrees" accounted for
+45–78% of failures — with LLM judges barely better than chance at spotting it. The
+only thing that settles it is running the acceptance command here, outside the
+sandbox.
+
+- **Red → green.** The command must *fail* before dispatch. A run that starts green
+  can only end green, which proves nothing, so that is refused
+  (`--verify-may-pass` for refactors where the suite legitimately stays green).
+- **`--regress`** must stay green across the run.
+- **Anti-gaming.** With `--protect`, the candidate is rebuilt on a clean checkout
+  with those paths restored from base and re-run. Passing as written but failing
+  with the original tests restored is reported as **`GAMED`**, never as verified.
+  This is the mechanism SWE-bench uses — revert, not prevent.
+
+The verdict is a deterministic label, not a model's opinion of itself:
+
+```
+VERIFIED · NOT VERIFIED · GAMED · REGRESSED · UNVERIFIED (no command / timed out)
+```
+
+A green suite is still a weak correctness claim — 29.6% of test-passing SWE-bench
+patches behave differently from ground truth. `VERIFIED` means *ready for your
+review*, never *done*.
+
+## Quality signals
+
+Flags, not failures, computed free from the trace:
+
+- **Repeated edits to one file** — the best-supported signal. A green run with many
+  redundant edits has roughly **1-in-3** odds of being an incomplete fix.
+- **History or network mining** (`git log`, `git show`, `curl github.com`) — the
+  documented path to an answer not derived from the code.
+- **Long runs** — failures run roughly twice the length of successes.
+- **Protected paths touched**, and anything outside `--scope`.
+- **Size tripwires** — solve rates fall off a cliff past ~3 files or ~100 lines.
+  A breach means the task wanted decomposing; it is never grounds to discard work.
+
+## Best-of-N
+
+`--attempts N` runs N dispatches in N detached worktrees off the same base. Winners
+are filtered by the acceptance and regression commands **first**, then ranked by
+smallest diff, and the winner is written as a patch you apply yourself — the
+wrapper never mutates your worktree.
+
+Smallest-diff is a tiebreak, not a judgement: read the surviving candidates
+pairwise. A scoring judge recovers only ~21% of the available gain because coarse
+scores tie 66.5% of the time; explicit pairwise comparison recovers ~61%. Expect
+roughly +5 to +7 points for N× the cost — not the pass@k figures papers report,
+which need hidden tests nobody has here. A 0-of-N result is one task-level failure,
+not N separate ones.
+
 ## Orchestration safety
 
 - **One dispatch per worktree**, enforced with an atomic lock. Two concurrent agents in one tree would interleave edits and make every "what changed" answer meaningless. A lock whose owning process is gone is taken over automatically.
@@ -120,5 +174,13 @@ These are measured, not hypothetical.
 | `--allow-write <dir>` | Extra writable subpath. Repeatable. |
 | `--scratch` | Permit a non-git directory, only under the temp root. |
 | `--raw` | Send the brief unwrapped. |
+| `--verify <cmd>` | **Required.** The acceptance command. Must fail before the run and pass after. |
+| `--regress <cmd>` | A command that must stay green across the run. |
+| `--protect <glob>` | Paths restored from base for the anti-gaming re-check. Repeatable. |
+| `--scope <glob>` | Declared change scope; anything outside is flagged. Repeatable. |
+| `--max-files N` / `--max-lines N` | Size tripwires. Flag, never reject. |
+| `--verify-may-pass` | Allow a green baseline (refactors, where the suite stays green). |
+| `--simplify <cmd>` | Post-hoc pass over a verified diff, reverted if behavior changes. |
+| `--attempts N` | Best-of-N in N detached worktrees; winner written as a patch. |
 | `--timeout <s>` | Wall-clock bound on the agent, default 1800. SIGTERM at the deadline, SIGKILL five seconds later. |
 | `--no-sandbox` | Dispatch unconfined. Avoid. |
