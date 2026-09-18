@@ -32,15 +32,23 @@ bin/swe2-dispatch.sh --workspace <linked worktree> --brief <task file> --out <ru
 
 Confinement is structural, not advisory. The script refuses to dispatch unless `--workspace` is the root of a **linked git worktree**, verified by requiring its git dir to be `<common-dir>/worktrees/<name>`. Checking only that `.git` is a *file* is not sufficient — a submodule's `.git` is also a file, pointing at a complete git directory that would then be writable and committable. Primary checkouts, submodules, and planted `.git` files are all refused.
 
-The run is then wrapped in a generated seatbelt profile permitting **writes** only in: the worktree, the run directory, that worktree's own git dir, and the agent's `devin` state directories. Writes anywhere else — including `$TMPDIR`, `~/.cache`, and `$HOME` — are denied by the OS. **Reads are not restricted**, and neither is network access.
+Git environment variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, …) are unset before any `git` call, because `rev-parse` honors them and an inherited value would make the guard inspect a different repository than `--workspace`.
 
-A deliberate consequence: the *shared* git common directory is **not** writable, so `git add` and `git commit` fail at the OS level while `git status`, `diff`, and `log` still work. **The worker cannot stage or commit even if it tries.** The dispatching session owns the index.
+The run is then wrapped in a generated seatbelt profile permitting **writes** only in: the worktree, the run directory, and the agent's `devin` state directories. Writes anywhere else — including `$TMPDIR`, `~/.cache`, `$HOME`, and **the worktree's own git directory** — are denied by the OS. **Reads are not restricted**, and neither is network access.
+
+No writable git directory is granted at all. Verified: `git status`, `git diff`, and `git log` still work read-only without one, while `git add`, `git commit`, and `git update-index --assume-unchanged` all fail on `index.lock`. That last one matters — it would otherwise let an agent hide a sabotaged tracked file from both this report *and* the `git diff` you are told to check. **The worker cannot stage, commit, or touch the index.**
+
+`--out` must be outside the worktree and outside every `--allow-write` path, because everything the report trusts as a baseline is kept in a private control directory the agent cannot reach.
 
 Paths interpolated into that profile are rejected if they contain characters that could terminate an S-expression (`"`, `)`, `(`, `\`, `;`, newline), so a crafted `--allow-write` or workspace path cannot widen the grant.
 
 `--mode` is an allowlist: `smart`, `accept-edits`, `auto`. Anything else, including `dangerous` in any casing, is refused.
 
-Change detection uses two independent detectors — mtime against a marker kept **outside** every agent-writable path, plus a `git status` delta — so an agent cannot suppress the "files touched" report, and untracked files it plants are listed separately.
+Change detection is computed outside the sandbox from state the agent cannot forge:
+
+- **ctime, not mtime.** `touch -t` rewrites mtime and atime but not ctime, and ctime cannot be moved backwards without root — so backdating a planted or edited file does not hide it. Comparison is against a reference file in the control directory.
+- **A path-set delta** against a pre-run inventory, which catches deletions (reported as `[DELETED]`).
+- **`.gitignore` is never used to filter this list.** A self-ignoring `.gitignore` was a working hiding primitive; ignored files are annotated `[gitignored]`, never removed.
 
 If the run produced no usable trace (no `export.json`, or `jq` missing), the report says `escape check: NOT PERFORMED` with the reason. Silence never reads as a clean result.
 

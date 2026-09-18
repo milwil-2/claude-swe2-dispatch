@@ -30,6 +30,12 @@
 
 set -uo pipefail
 
+# git's rev-parse honors these, so an inherited value would make the guard
+# inspect a repository that has nothing to do with --workspace. They are also
+# routinely set inside git hooks, so this is not only a hostile-caller concern.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CEILING_DIRECTORIES 2>/dev/null
+
 DEVIN="${DEVIN_BIN:-$HOME/.local/bin/devin}"
 MODEL="swe-2-max"
 MODE="smart"
@@ -137,20 +143,42 @@ safe_for_profile "$OUT" || die "--out path contains characters that cannot be sa
 # Stale artifacts from a reused --out must never be reported as this run's.
 rm -f "$OUT/export.json" "$OUT/answer.txt" "$OUT/stderr.txt" "$OUT/tools.txt" \
       "$OUT/actions.txt" "$OUT/metrics.json" "$OUT/outside.txt" "$OUT/changed.txt" \
-      "$OUT/status.before" "$OUT/status.after" 2>/dev/null
+      "$OUT/status.before" "$OUT/status.after" "$OUT/branch" "$OUT/head.before" \
+      "$OUT/unstaged.diff" "$OUT/staged.diff" "$OUT/changed.raw" "$OUT/brief.sent.md" \
+      "$OUT/sandbox.sb" 2>/dev/null
 
-# Control directory: deliberately OUTSIDE every path the agent can write, so the
-# agent cannot backdate the marker to suppress change detection.
-CTL="$(dirname "$OUT")/.swe2-ctl-$RUN_ID"
+# $OUT is granted to the agent, so nothing the report trusts may live in it, and
+# it must not sit inside the workspace (which is also agent-writable).
+case "$OUT/" in
+  "$WORKSPACE"/*) die "--out must not be inside the workspace ($OUT); the agent can write there" ;;
+esac
+for extra in ${EXTRA_WRITES[@]+"${EXTRA_WRITES[@]}"}; do
+  ex="$(cd "$extra" 2>/dev/null && pwd -P)" || continue
+  case "$OUT/" in "$ex"/*) die "--out must not be inside an --allow-write path ($ex)" ;; esac
+done
+
+# Control directory: holds every baseline the report trusts. It lives outside
+# $OUT, outside the workspace, and outside every granted path, so the agent
+# cannot reach it at all.
+CTL="${TMPDIR:-/tmp}/.swe2-ctl-$RUN_ID"
+case "$CTL/" in "$WORKSPACE"/*|"$OUT"/*) CTL="/tmp/.swe2-ctl-$RUN_ID" ;; esac
 mkdir -p "$CTL" || exit 2
-MARKER="$CTL/start-marker"; touch "$MARKER"
-sleep 1  # filesystem mtime granularity
+chmod 700 "$CTL" 2>/dev/null
+trap 'rm -rf "$CTL"' EXIT INT TERM
 
+# Inventory the tree BEFORE the run. Paths only -- cheap even on a large repo.
+find "$WORKSPACE" -type f -not -path "*/.git/*" -print 2>/dev/null | sort > "$CTL/files.before"
 if [[ "$IS_GIT" == "1" ]]; then
-  git -C "$WORKSPACE" rev-parse HEAD              > "$OUT/head.before"   2>/dev/null
-  git -C "$WORKSPACE" status --porcelain          > "$OUT/status.before" 2>/dev/null
+  git -C "$WORKSPACE" rev-parse HEAD              > "$CTL/head.before"   2>/dev/null
+  git -C "$WORKSPACE" status --porcelain          > "$CTL/status.before" 2>/dev/null
   git -C "$WORKSPACE" rev-parse --abbrev-ref HEAD > "$OUT/branch"        2>/dev/null
 fi
+sleep 1  # timestamp granularity
+# Reference file for ctime comparison. It lives in $CTL, which the agent cannot
+# reach, and -newercm compares each file's CTIME against this marker's mtime --
+# ctime cannot be moved backwards by `touch`, so backdating a planted or edited
+# file does not hide it.
+MARKER="$CTL/start-marker"; touch "$MARKER"
 
 # ---- Brief composition -------------------------------------------------------
 SENT_BRIEF="$BRIEF"
@@ -202,6 +230,9 @@ SANDBOX_CMD=()
 if [[ "$SANDBOX" == "1" ]]; then
   command -v sandbox-exec >/dev/null 2>&1 || \
     die "sandbox-exec not available; re-run with --no-sandbox to dispatch unconfined"
+  DEVIN_STATE="$HOME/.local/share/devin"; DEVIN_CFG="$HOME/.config/devin"
+  safe_for_profile "$DEVIN_STATE" && safe_for_profile "$DEVIN_CFG" || \
+    die "home directory path contains characters that cannot be sandboxed safely"
   {
     echo '(version 1)'
     echo '(allow default)'
@@ -209,14 +240,16 @@ if [[ "$SANDBOX" == "1" ]]; then
     echo '(allow file-write*'
     echo "  (subpath \"$WORKSPACE\")"
     echo "  (subpath \"$OUT\")"
-    [[ -n "$GITDIR" ]] && echo "  (subpath \"$GITDIR\")"
-    echo "  (subpath \"$HOME/.local/share/devin\")"
-    echo "  (subpath \"$HOME/.config/devin\")"
+    # The worktree's git dir is deliberately NOT granted. Verified: `git status`,
+    # `git diff` and `git log` still work read-only without it, while
+    # `git update-index --assume-unchanged` -- which would hide a sabotaged
+    # tracked file from both the report AND `git diff` -- fails on index.lock.
+    echo "  (subpath \"$DEVIN_STATE\")"
+    echo "  (subpath \"$DEVIN_CFG\")"
     for extra in ${EXTRA_WRITES[@]+"${EXTRA_WRITES[@]}"}; do
-      if [[ ! -e "$extra" ]]; then
-        echo "swe2-dispatch: warning: --allow-write path does not exist, ignoring: $extra" >&2
-        continue
-      fi
+      safe_for_profile "$extra" || \
+        die "--allow-write path contains characters that cannot be sandboxed safely: $extra"
+      [[ -e "$extra" ]] || die "--allow-write path does not exist: $extra"
       resolved="$(cd "$extra" 2>/dev/null && pwd -P)" || \
         die "--allow-write must be a directory: $extra"
       safe_for_profile "$resolved" || \
@@ -251,38 +284,64 @@ if [[ -s "$OUT/export.json" ]]; then
     TRACE_WHY="jq is not installed"
   fi
 fi
+if [[ "$HAVE_TRACE" == "1" && ! -s "$OUT/actions.txt" ]]; then
+  TRACE_WHY="the trace recorded no tool calls with arguments"
+fi
 
 # ---- What changed -----------------------------------------------------------
-# Two independent detectors, unioned: mtime against a marker the agent cannot
-# reach, and a porcelain-status delta. Either alone has a blind spot.
+# Ground truth is computed here, outside the sandbox, from state the agent
+# cannot forge:
+#   * ctime, not mtime. `touch -t` rewrites mtime and atime but NOT ctime, and
+#     ctime cannot be moved backwards without root -- so backdating a planted
+#     file no longer hides it.
+#   * a path-set delta against a pre-run inventory kept in $CTL, which catches
+#     deletions and anything whose timestamps were manipulated.
+# .gitignore is NEVER used to filter this list: a self-ignoring .gitignore was a
+# working hiding primitive. Ignored files are annotated, never removed.
 if [[ "$IS_GIT" == "1" ]]; then
   git -C "$WORKSPACE" status --porcelain > "$OUT/status.after"  2>/dev/null
   git -C "$WORKSPACE" diff               > "$OUT/unstaged.diff" 2>/dev/null
   git -C "$WORKSPACE" diff --cached      > "$OUT/staged.diff"   2>/dev/null
 fi
+find "$WORKSPACE" -type f -not -path "*/.git/*" -print 2>/dev/null | sort > "$CTL/files.after"
 {
-  find "$WORKSPACE" -type f -newer "$MARKER" -not -path "*/.git/*" 2>/dev/null \
-    | sed "s|^$WORKSPACE/||"
-  if [[ "$IS_GIT" == "1" ]]; then
-    comm -13 <(sort "$OUT/status.before" 2>/dev/null) <(sort "$OUT/status.after" 2>/dev/null) \
-      | sed 's/^...//'
+  # created or modified during the run (ctime-based)
+  find "$WORKSPACE" -type f -not -path "*/.git/*" -newercm "$MARKER" -print 2>/dev/null
+  # appeared during the run (path-set delta; redundant with the above by design)
+  comm -13 "$CTL/files.before" "$CTL/files.after" 2>/dev/null
+} 2>/dev/null | sort -u > "$CTL/changed.abs"
+: > "$OUT/changed.txt"
+while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
+  rel="${f#"$WORKSPACE"/}"
+  note=""
+  if [[ "$IS_GIT" == "1" ]] && git -C "$WORKSPACE" check-ignore -q -- "$rel" 2>/dev/null; then
+    note="   [gitignored]"
   fi
-} 2>/dev/null | sed '/^$/d' | sort -u > "$OUT/changed.raw"
-if [[ "$IS_GIT" == "1" ]] && command -v git >/dev/null 2>&1; then
-  git -C "$WORKSPACE" check-ignore -v --stdin --non-matching < "$OUT/changed.raw" 2>/dev/null \
-    | awk -F'\t' '$1 ~ /^::/ {print $2}' | sort -u > "$OUT/changed.txt"
-  [[ -s "$OUT/changed.txt" ]] || cp "$OUT/changed.raw" "$OUT/changed.txt"
-else
-  cp "$OUT/changed.raw" "$OUT/changed.txt"
-fi
+  printf '%s%s\n' "$rel" "$note" >> "$OUT/changed.txt"
+done < "$CTL/changed.abs"
+# deletions
+comm -23 "$CTL/files.before" "$CTL/files.after" 2>/dev/null | while IFS= read -r f; do
+  [[ -n "$f" ]] || continue
+  printf '%s   [DELETED]\n' "${f#"$WORKSPACE"/}" >> "$OUT/changed.txt"
+done
 
 # ---- Did the agent touch anything outside the workspace? --------------------
 ESCAPE_CHECKED=0; ESCAPED=""
 if [[ "$HAVE_TRACE" == "1" && -s "$OUT/actions.txt" ]]; then
   ESCAPE_CHECKED=1
+  # A path counts as inside only if it starts with the workspace AND contains no
+  # upward traversal -- `<workspace>/../../etc/shadow` starts with the workspace.
   grep -oE '"file_path":"[^"]+"' "$OUT/actions.txt" 2>/dev/null \
     | sed 's/"file_path":"//; s/"$//' | sort -u \
-    | grep -v -F "$WORKSPACE/" > "$OUT/outside.txt" 2>/dev/null
+    | while IFS= read -r fp; do
+        case "$fp" in
+          */../*|*/..) echo "$fp" ;;
+          "$WORKSPACE"/*) : ;;
+          /*) echo "$fp" ;;
+          *) echo "$fp   [relative path -- could not be resolved]" ;;
+        esac
+      done > "$OUT/outside.txt" 2>/dev/null
   [[ -s "$OUT/outside.txt" ]] && ESCAPED=1
 fi
 
@@ -330,5 +389,4 @@ else
   [[ -s "$OUT/answer.txt" ]] && cap "$OUT/answer.txt"
 fi
 
-rm -rf "$CTL"
 exit $STATUS
