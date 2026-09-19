@@ -763,7 +763,7 @@ Before performing ANY write work, ask the user explicitly and wait for approval.
 Write work includes: editing or creating files, staging, committing.
 EOS
   out="$(XDG_CONFIG_HOME="$C1" bash "$DOC" 2>&1)"
-  want "doctor/flags an approval-before-edit rule" "appears to require approval before file edits" "$out"
+  want "doctor/flags an approval-before-edit rule" "requires approval before file edits" "$out"
 
   C2="$LAB/cfg-ok"; mkdir -p "$C2/devin"
   cat > "$C2/devin/AGENTS.md" <<'EOS'
@@ -772,7 +772,7 @@ A request that plainly describes the change is the approval for the file edits
 that carry it out. Commits, pushes and PRs still need their own explicit ask.
 EOS
   out="$(XDG_CONFIG_HOME="$C2" bash "$DOC" 2>&1)"
-  want_not "doctor/does not flag a correctly scoped rule" "appears to require approval" "$out"
+  want_not "doctor/does not flag a correctly scoped rule" "requires approval before file edits" "$out"
 
   C3="$LAB/cfg-none"; mkdir -p "$C3/devin"
   out="$(XDG_CONFIG_HOME="$C3" bash "$DOC" 2>&1)"

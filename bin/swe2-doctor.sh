@@ -50,12 +50,40 @@ echo "Agent rules that break non-interactive dispatch"
 # nothing. This gagged 48 of 61 runs once before it was diagnosed.
 RULES="${XDG_CONFIG_HOME:-$HOME/.config}/devin/AGENTS.md"
 if [[ -f "$RULES" ]]; then
-  if grep -qiE '(ask|approval|permission|confirm)[^.]{0,80}(before|prior to)[^.]{0,80}(writ|edit|creat|chang|modif)' "$RULES" \
-     || grep -qiE '(writ|edit|creat)[^.]{0,60}(require|need)[^.]{0,40}(approval|confirmation|permission)' "$RULES"; then
-    bad "$RULES appears to require approval before file edits.
-              devin cannot ask in non-interactive mode, so edits will be dropped and
-              dispatches will do nothing. Scope that rule so a described task authorises
-              the edits it implies, or keep it and expect BLOCKED verdicts."
+  # Fixed strings, not regex: the system grep here is ugrep, which rejects bounded
+  # [^.]{0,N} patterns with "exceeds complexity limits" -- so a clever regex
+  # silently never runs. Flag only when an approval demand AND an edit noun both
+  # appear; either alone is normal prose.
+  # Scope the scan: a Provenance section QUOTES superseded rules, and quoting the
+  # old rule is not the same as having it. Then require both phrases in ONE
+  # sentence -- across a whole file they co-occur innocently.
+  # tolower(), not IGNORECASE: the latter is a gawk extension that macOS awk
+  # silently ignores, which meant "## Provenance" never matched and the quoted
+  # historical rule was scanned as if it were active policy.
+  BODY="$(awk 'tolower($0) ~ /^#+[[:space:]]*provenance/{exit} {print}' "$RULES")"
+  FLAT="$(printf '%s' "$BODY" | tr '\n' ' ' | tr -s ' ' | tr '[:upper:]' '[:lower:]')"
+  APPROVAL=""; EDITS=""
+  OLDIFS="$IFS"; IFS='.'
+  for sentence in $FLAT; do
+    sa=""; se=""
+    for ph in "wait for approval" "wait for confirmation" "explicit approval" \
+              "requires approval" "require approval" "needs approval" "need approval" \
+              "ask the user explicitly" "before performing any write"; do
+      printf '%s' "$sentence" | grep -qF "$ph" && { sa="$ph"; break; }
+    done
+    [[ -z "$sa" ]] && continue
+    for ph in "write work" "file edits" "editing or creating" "creating files" \
+              "edit files" "modifying files"; do
+      printf '%s' "$sentence" | grep -qF "$ph" && { se="$ph"; break; }
+    done
+    [[ -n "$se" ]] && { APPROVAL="$sa"; EDITS="$se"; break; }
+  done
+  IFS="$OLDIFS"
+  if [[ -n "$APPROVAL" && -n "$EDITS" ]]; then
+    bad "$RULES requires approval before file edits (\"$APPROVAL\" + \"$EDITS\").
+              devin cannot ask in non-interactive mode, so edits are dropped and the
+              dispatch does nothing. Scope the rule so a described task authorises the
+              edits it implies, or keep it and expect BLOCKED verdicts."
   else
     ok "$RULES has no approval-before-edit rule"
   fi
