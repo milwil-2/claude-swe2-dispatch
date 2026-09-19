@@ -53,7 +53,7 @@ MODE="smart"
 WORKSPACE=""; BRIEF=""; OUT=""; RESUME=""
 SCRATCH=0; SANDBOX=1; RAW=0; TIMEOUT=1800
 VERIFY=""; REGRESS=""; VERIFY_MAY_PASS=0; SIMPLIFY=""
-MAX_FILES=0; MAX_LINES=0; ATTEMPTS=1; RETRIES=2
+MAX_FILES=0; MAX_LINES=0; ATTEMPTS=1; RETRIES=1
 EXTRA_WRITES=(); PROTECT=(); SCOPE=()
 
 die() { echo "swe2-dispatch: $*" >&2; exit 2; }
@@ -142,9 +142,12 @@ case "$MODE" in smart|accept-edits|auto) : ;;
   *) die "--mode must be one of: smart, accept-edits, auto (got '$MODE')" ;; esac
 case "$TIMEOUT" in ''|*[!0-9]*) die "--timeout must be a whole number of seconds (got '$TIMEOUT')" ;; esac
 case "$RETRIES" in ''|*[!0-9]*) die "--retries must be a whole number" ;; esac
-# Per-round gains measured at +6.1 / +2.4 / +0.6 / +0.6 points: past two, it is
-# thrashing rather than repairing.
-[[ "$RETRIES" -le 3 ]] || die "--retries above 3 is not useful; returns collapse after two"
+# Default 1, not 2. At EQUAL COMPUTE, deep repair chains lose to diverse sampling:
+# 2 samples x 10 repairs measured at 0.97x the no-repair baseline, while 10 samples
+# x 1 repair gave 1.05x. Spend budget on --attempts before --retries.
+[[ "$RETRIES" -le 3 ]] || die "--retries above 3 is not useful; at equal compute,
+              deep repair chains measure BELOW the no-repair baseline. Raise --attempts
+              instead: diverse initial attempts beat repeated repair of one."
 [[ "$TIMEOUT" -gt 0 ]] || die "--timeout must be greater than zero"
 
 case "$ATTEMPTS" in ''|*[!0-9]*) die "--attempts must be a whole number" ;; esac

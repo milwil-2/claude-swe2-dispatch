@@ -88,10 +88,15 @@ passed. Never the agent's own account of why it failed, which was wrong about 40
 of the time in the one study that checked; substituting accurate feedback moved
 repair success from 33% to 53%.
 
-The cap is deliberate. Per-round gains measure at roughly +6.1 / +2.4 / +0.6 / +0.6
-points — past two rounds it is thrashing, not repairing. The final round starts a
-**fresh session** rather than resuming, because a long session accumulates its own
-wrong turns and a clean start with a better prompt beats one carrying corrections.
+**Prefer `--attempts` over `--retries`.** At equal compute, deep repair chains lose
+to diverse sampling: 2 samples × 10 repairs measured at **0.97×** the no-repair
+baseline — worse than not repairing — while 10 samples × 1 repair gave 1.05×.
+Critique content also matters less than it seems: on one task family, random and
+adversarial feedback performed comparably to sound-verifier feedback, because the
+gain came from re-sampling rather than from the critique. Hence default 1.
+
+The final round starts a **fresh session** rather than resuming, because a long
+session accumulates its own wrong turns.
 
 A run that was refused a tool call is never retried: retrying cannot help, and
 blind retries measurably raise cheating (33% → 38%).
@@ -111,6 +116,25 @@ Flags, not failures, computed free from the trace:
 - **Protected paths touched**, and anything outside `--scope`.
 - **Size tripwires** — solve rates fall off a cliff past ~3 files or ~100 lines.
   A breach means the task wanted decomposing; it is never grounds to discard work.
+
+## Choosing a model
+
+`--model` passes straight through, and the choice matters more than anything this
+wrapper does. Two findings worth knowing:
+
+- **Supervision buys roughly half the sampling headroom, not a capability tier.**
+  Across seven systems on SWE-bench, verifier/selector approaches recover 28–63% of
+  the random→oracle gap and nothing published breaks 65%. No amount of inference
+  scaling makes a weaker model match a sufficiently stronger one's single sample.
+- **"Fusion" models are a cost play, not a quality play.** Cognition's lead/sidekick
+  pairings (a frontier model planning, SWE-2 executing) score **0.5–2.8 points below
+  frontier-solo** on every published table, at 36–60% less cost — e.g. Fusion 63.1 at
+  $1.35/task vs Opus 5 medium 63.6 at $3.51 on FrontierCode 1.1 Extended. All
+  vendor-run, no n, no variance, no independent replication.
+
+So: if you want frontier quality, pay for a frontier model. If you want close to it
+cheaply, a fusion pairing is the documented trade. This wrapper improves the
+*trustworthiness* of whatever you pick; it does not substitute for the model.
 
 ## Best-of-N
 
@@ -202,6 +226,6 @@ These are measured, not hypothetical.
 | `--verify-may-pass` | Allow a green baseline (refactors, where the suite stays green). |
 | `--simplify <cmd>` | Post-hoc pass over a verified diff, reverted if behavior changes. |
 | `--attempts N` | Best-of-N in N detached worktrees; winner written as a patch. |
-| `--retries N` | Feedback-driven repair rounds after a failed acceptance, default 2, max 3. |
+| `--retries N` | Feedback-driven repair rounds after a failed acceptance, default 1, max 3. |
 | `--timeout <s>` | Wall-clock bound on the agent, default 1800. SIGTERM at the deadline, SIGKILL five seconds later. |
 | `--no-sandbox` | Dispatch unconfined. Avoid. |

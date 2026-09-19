@@ -804,7 +804,7 @@ fi
 
 if match retry/bounded; then
   out="$("$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --verify "$VCMD" --retries 9 2>&1)"
-  want "retry/refuses more than three rounds" "returns collapse after two" "$out"
+  want "retry/refuses more than three rounds" "deep repair chains measure BELOW" "$out"
 fi
 
 # ============================ DOCTOR PREFLIGHT ===============================
