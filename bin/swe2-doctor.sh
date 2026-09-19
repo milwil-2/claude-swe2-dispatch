@@ -43,6 +43,27 @@ if [[ -x "$DEVIN" ]]; then
 else warn "skipped -- devin unavailable"; fi
 echo
 
+echo "Agent rules that break non-interactive dispatch"
+# devin loads ~/.config/devin/AGENTS.md (and .claude/settings.json) on every run.
+# An approval-style rule there makes file edits need confirmation -- which cannot
+# be given in -p mode, so the agent analyses correctly and then silently does
+# nothing. This gagged 48 of 61 runs once before it was diagnosed.
+RULES="${XDG_CONFIG_HOME:-$HOME/.config}/devin/AGENTS.md"
+if [[ -f "$RULES" ]]; then
+  if grep -qiE '(ask|approval|permission|confirm)[^.]{0,80}(before|prior to)[^.]{0,80}(writ|edit|creat|chang|modif)' "$RULES" \
+     || grep -qiE '(writ|edit|creat)[^.]{0,60}(require|need)[^.]{0,40}(approval|confirmation|permission)' "$RULES"; then
+    bad "$RULES appears to require approval before file edits.
+              devin cannot ask in non-interactive mode, so edits will be dropped and
+              dispatches will do nothing. Scope that rule so a described task authorises
+              the edits it implies, or keep it and expect BLOCKED verdicts."
+  else
+    ok "$RULES has no approval-before-edit rule"
+  fi
+else
+  ok "no user AGENTS.md (nothing to gag edits)"
+fi
+echo
+
 echo "Supporting tools"
 command -v jq   >/dev/null 2>&1 && ok "jq"   || bad "jq not found -- the run report degrades badly without it"
 command -v git  >/dev/null 2>&1 && ok "git"  || bad "git not found"
