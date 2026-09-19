@@ -8,7 +8,7 @@
 #                    [--timeout <seconds>]
 #                    --verify <cmd> [--regress <cmd>] [--protect <glob>]...
 #                    [--scope <glob>]... [--max-files N] [--max-lines N]
-#                    [--verify-may-pass] [--simplify <cmd>] [--attempts N]
+#                    [--verify-may-pass] [--simplify <cmd>] [--attempts N] [--retries N]
 #
 # THE CENTRAL INVARIANT
 #   Nothing the report depends on is ever written where the agent can reach it,
@@ -53,7 +53,7 @@ MODE="smart"
 WORKSPACE=""; BRIEF=""; OUT=""; RESUME=""
 SCRATCH=0; SANDBOX=1; RAW=0; TIMEOUT=1800
 VERIFY=""; REGRESS=""; VERIFY_MAY_PASS=0; SIMPLIFY=""
-MAX_FILES=0; MAX_LINES=0; ATTEMPTS=1
+MAX_FILES=0; MAX_LINES=0; ATTEMPTS=1; RETRIES=2
 EXTRA_WRITES=(); PROTECT=(); SCOPE=()
 
 die() { echo "swe2-dispatch: $*" >&2; exit 2; }
@@ -105,6 +105,7 @@ while [[ $# -gt 0 ]]; do
     --verify-may-pass) VERIFY_MAY_PASS=1; shift 1 ;;
     --simplify)    need_val "$@"; SIMPLIFY="$2"; shift 2 ;;
     --attempts)    need_val "$@"; ATTEMPTS="$2"; shift 2 ;;
+    --retries)     need_val "$@"; RETRIES="$2";  shift 2 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -140,6 +141,10 @@ fi
 case "$MODE" in smart|accept-edits|auto) : ;;
   *) die "--mode must be one of: smart, accept-edits, auto (got '$MODE')" ;; esac
 case "$TIMEOUT" in ''|*[!0-9]*) die "--timeout must be a whole number of seconds (got '$TIMEOUT')" ;; esac
+case "$RETRIES" in ''|*[!0-9]*) die "--retries must be a whole number" ;; esac
+# Per-round gains measured at +6.1 / +2.4 / +0.6 / +0.6 points: past two, it is
+# thrashing rather than repairing.
+[[ "$RETRIES" -le 3 ]] || die "--retries above 3 is not useful; returns collapse after two"
 [[ "$TIMEOUT" -gt 0 ]] || die "--timeout must be greater than zero"
 
 case "$ATTEMPTS" in ''|*[!0-9]*) die "--attempts must be a whole number" ;; esac
@@ -420,35 +425,40 @@ fi
 
 # ---- Run ---------------------------------------------------------------------
 cd "$WORKSPACE" || exit 2
-STARTED_AT="$(date '+%s')"
-set -m   # each job gets its own process group (PGID == PID); macOS has no setsid
-TMPDIR="$AGENT_DIR/tmp" ${SANDBOX_CMD[@]+"${SANDBOX_CMD[@]}"} "$DEVIN" "${DEVIN_ARGS[@]}" \
-  > "$CTL/answer.txt" 2> "$CTL/stderr.txt" &
-AGENT_PID=$!
-AGENT_PGID=$AGENT_PID
-set +m
-( sleep "$TIMEOUT"
-  : > "$CTL/timed-out"
-  kill -TERM -- -"$AGENT_PGID" 2>/dev/null && { sleep 5; kill -KILL -- -"$AGENT_PGID" 2>/dev/null; }
-) >/dev/null 2>&1 &
-WATCHDOG=$!
-wait "$AGENT_PID"; STATUS=$?
-kill "$WATCHDOG" 2>/dev/null; wait "$WATCHDOG" 2>/dev/null
 
-# Reap the whole process group BEFORE measuring. A detached `nohup ... &` child
-# otherwise writes to the worktree after the inventory is taken, so the report
-# says "clean" and the plant appears seconds later.
-kill -TERM -- -"$AGENT_PGID" 2>/dev/null
-sleep 1
-kill -KILL -- -"$AGENT_PGID" 2>/dev/null
-ORPHANS="$(pgrep -g "$AGENT_PGID" 2>/dev/null | wc -l | tr -d ' ')"
-AGENT_PGID=""
+# ---- One agent invocation ----------------------------------------------------
+# Wrapped in a function so the retry loop can call it again with feedback.
+# $1 = brief file, $2 = session to resume (empty for a fresh session)
+dispatch_agent() {
+  local brief="$1" resume="${2:-}"
+  local args=(-p --prompt-file "$brief" --model "$MODEL" --permission-mode "$MODE"
+              --respect-workspace-trust false --export "$EXPORT_JSON")
+  [[ -n "$resume" ]] && args+=(--resume "$resume")
+  STARTED_AT="$(date '+%s')"
+  set -m
+  TMPDIR="$AGENT_DIR/tmp" ${SANDBOX_CMD[@]+"${SANDBOX_CMD[@]}"} "$DEVIN" "${args[@]}" \
+    >> "$CTL/answer.txt" 2>> "$CTL/stderr.txt" &
+  AGENT_PID=$!
+  AGENT_PGID=$AGENT_PID
+  set +m
+  ( sleep "$TIMEOUT"
+    : > "$CTL/timed-out"
+    kill -TERM -- -"$AGENT_PGID" 2>/dev/null && { sleep 5; kill -KILL -- -"$AGENT_PGID" 2>/dev/null; }
+  ) >/dev/null 2>&1 &
+  WATCHDOG=$!
+  wait "$AGENT_PID"; STATUS=$?
+  kill "$WATCHDOG" 2>/dev/null; wait "$WATCHDOG" 2>/dev/null
+  # Reap the tree BEFORE measuring: a detached child otherwise writes after the fact.
+  kill -TERM -- -"$AGENT_PGID" 2>/dev/null; sleep 1; kill -KILL -- -"$AGENT_PGID" 2>/dev/null
+  ORPHANS="$(pgrep -g "$AGENT_PGID" 2>/dev/null | wc -l | tr -d ' ')"
+  AGENT_PGID=""
+  ELAPSED=$(( ELAPSED + $(date '+%s') - STARTED_AT ))
+  [[ -e "$CTL/timed-out" ]] && TIMED_OUT=1
+  return $STATUS
+}
 
-ELAPSED=$(( $(date '+%s') - STARTED_AT ))
-# A sentinel, not a heuristic on the exit code: the old test misclassified in
-# both directions.
-TIMED_OUT=""
-[[ -e "$CTL/timed-out" ]] && TIMED_OUT=1
+ELAPSED=0; TIMED_OUT=""; ORPHANS=0
+dispatch_agent "$SENT_BRIEF" "$RESUME"; STATUS=$?
 
 # ---- Parse the trace (agent-written: untrusted) ------------------------------
 SESSION_ID=""; HAVE_TRACE=0; TRACE_WHY="no export.json was written"
@@ -544,9 +554,57 @@ if [[ "$HAVE_TRACE" == "1" && -s "$CTL/actions.txt" ]]; then
   [[ -s "$CTL/outside.txt" ]] && ESCAPED=1
 fi
 
-# ---- Post-run verification ---------------------------------------------------
+# ---- Post-run verification, with feedback-driven retries ---------------------
+# Real execution feedback is worth roughly ten times the equivalent budget spent
+# on blind resampling -- but only if the feedback is real. What goes back is the
+# command, its exit status and its actual output. Never the agent's own account of
+# why it failed: self-diagnosis was wrong ~40% of the time in the one study that
+# checked, and swapping in accurate feedback moved repair success 33% -> 53%.
+ROUNDS=0
 if [[ -n "$VERIFY" ]]; then
   run_check verify-after "$VERIFY"; VERIFY_AFTER=$?
+  while [[ "$VERIFY_AFTER" -ne 0 && "$ROUNDS" -lt "$RETRIES" ]]; do
+    [[ -n "$TIMED_OUT" ]] && break
+    grep -q "requires confirmation" "$CTL/stderr.txt" 2>/dev/null && break  # gagged: retrying cannot help
+    ROUNDS=$(( ROUNDS + 1 ))
+    SID="$(jq -r '.session_id // ""' "$EXPORT_JSON" 2>/dev/null)"
+    RB="$CTL/retry-$ROUNDS.md"
+    {
+      echo "Your change does not yet satisfy the acceptance check. This is the real"
+      echo "output of the command, run outside your environment after your last edit."
+      echo
+      echo "Command:   $VERIFY"
+      echo "Exit code: $VERIFY_AFTER"
+      echo
+      echo "Output (tail):"
+      echo '```'
+      tail -40 "$CTL/verify-after.log" 2>/dev/null
+      echo '```'
+      echo
+      if [[ -n "$REGRESS" ]]; then
+        run_check regress-after "$REGRESS"; RA=$?
+        if [[ "$RA" -ne 0 && "${REGRESS_BEFORE:-1}" -eq 0 ]]; then
+          echo "You have ALSO broken something that previously passed:"
+          echo '```'; tail -20 "$CTL/regress-after.log" 2>/dev/null; echo '```'
+          echo
+        fi
+      fi
+      echo "Fix the cause, not the symptom. Do not weaken or edit the check to make it"
+      echo "pass. If the requirement genuinely cannot be met as specified, stop and say"
+      echo "so with the reason -- that is a correct outcome."
+    } > "$RB"
+    # Last round starts fresh: a long session accumulates its own wrong turns, and
+    # a clean session with a better prompt beats one carrying the corrections.
+    if [[ "$ROUNDS" -ge "$RETRIES" && "$RETRIES" -gt 1 ]]; then
+      { cat "$SENT_BRIEF"; echo; echo "## Previous attempt"; echo; cat "$RB"; } > "$CTL/retry-fresh.md"
+      echo "--- retry $ROUNDS/$RETRIES (fresh session) ---" >&2
+      dispatch_agent "$CTL/retry-fresh.md" ""
+    else
+      echo "--- retry $ROUNDS/$RETRIES (resuming $SID) ---" >&2
+      dispatch_agent "$RB" "$SID"
+    fi
+    run_check verify-after "$VERIFY"; VERIFY_AFTER=$?
+  done
 fi
 if [[ -n "$REGRESS" ]]; then
   run_check regress-after "$REGRESS"; REGRESS_AFTER=$?
@@ -690,7 +748,7 @@ echo "status:     $STATUS"
 echo "model:      $MODEL (mode: $MODE, sandbox: $([[ $SANDBOX == 1 ]] && echo on || echo OFF))"
 echo "workspace:  $WORKSPACE$BRANCH_LINE"
 [[ -n "$SESSION_ID" ]] && echo "session_id: $SESSION_ID   (resume: --resume $SESSION_ID)"
-echo "artifacts:  $OUT   (elapsed: ${ELAPSED}s)"
+echo "artifacts:  $OUT   (elapsed: ${ELAPSED}s$([[ "$ROUNDS" -gt 0 ]] && echo ", ${ROUNDS} retry round(s)"))"
 [[ -n "$TIMED_OUT" ]] && echo "!! TIMED OUT after ${TIMEOUT}s and was killed -- any work below is PARTIAL !!"
 if [[ -n "$BLOCKED" ]]; then
   echo "!! A TOOL CALL WAS REFUSED FOR CONFIRMATION !!"

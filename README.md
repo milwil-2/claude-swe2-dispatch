@@ -79,6 +79,23 @@ A green suite is still a weak correctness claim — 29.6% of test-passing SWE-be
 patches behave differently from ground truth. `VERIFIED` means *ready for your
 review*, never *done*.
 
+## Retries
+
+A failed acceptance triggers up to `--retries` repair rounds (default 2). What goes
+back to the agent is **harness-produced**: the command, its exit status, and its
+real output — plus the regression failure if it broke something that previously
+passed. Never the agent's own account of why it failed, which was wrong about 40%
+of the time in the one study that checked; substituting accurate feedback moved
+repair success from 33% to 53%.
+
+The cap is deliberate. Per-round gains measure at roughly +6.1 / +2.4 / +0.6 / +0.6
+points — past two rounds it is thrashing, not repairing. The final round starts a
+**fresh session** rather than resuming, because a long session accumulates its own
+wrong turns and a clean start with a better prompt beats one carrying corrections.
+
+A run that was refused a tool call is never retried: retrying cannot help, and
+blind retries measurably raise cheating (33% → 38%).
+
 ## Quality signals
 
 Flags, not failures, computed free from the trace:
@@ -185,5 +202,6 @@ These are measured, not hypothetical.
 | `--verify-may-pass` | Allow a green baseline (refactors, where the suite stays green). |
 | `--simplify <cmd>` | Post-hoc pass over a verified diff, reverted if behavior changes. |
 | `--attempts N` | Best-of-N in N detached worktrees; winner written as a patch. |
+| `--retries N` | Feedback-driven repair rounds after a failed acceptance, default 2, max 3. |
 | `--timeout <s>` | Wall-clock bound on the agent, default 1800. SIGTERM at the deadline, SIGKILL five seconds later. |
 | `--no-sandbox` | Dispatch unconfined. Avoid. |

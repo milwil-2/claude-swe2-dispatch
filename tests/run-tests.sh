@@ -750,6 +750,63 @@ EOS
   ( cd "$WT" && git checkout -q -- . 2>/dev/null; rm -f newfile.txt )
 fi
 
+# ============================ RETRY LOOP =====================================
+echo
+echo "Feedback-driven retries"
+
+if match retry/succeeds-on-second; then
+  # Fails once, then succeeds -- proving the loop re-dispatches and re-verifies.
+  S="$(stub twostep <<'EOS'
+if [ -f .attempt1 ]; then
+  sed -i '' 's|return a \* b|return a / b|' calc.py
+  echo "fixed on retry"
+else
+  touch .attempt1
+  echo "first attempt, no fix"
+fi
+EOS
+)"
+  reset_v; rm -f "$VWT/.attempt1"
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/r1" \
+         --verify "$VCMD" --protect 'test_*.py' --retries 2 2>&1)"
+  want "retry/a failed run is retried and can then verify" "VERIFIED" "$out"
+  want "retry/the report states rounds used"               "retry round" "$out"
+  reset_v; rm -f "$VWT/.attempt1"
+fi
+
+if match retry/feedback-is-real; then
+  S="$(stub never <<'EOS'
+echo "I will not fix it"
+EOS
+)"
+  reset_v
+  DEVIN_BIN="$S" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/r2" \
+    --verify "$VCMD" --protect 'test_*.py' --retries 1 >/dev/null 2>&1
+  RB="$(ls -t ${TMPDIR:-/tmp}/.swe2-ctl-*/retry-1.md 2>/dev/null | head -1)"
+  if [[ -n "$RB" ]]; then bad "retry/control dir is cleaned up" "leaked: $RB"; else
+    ok "retry/control dir is cleaned up after the run"; fi
+  reset_v
+fi
+
+if match retry/gagged-not-retried; then
+  S="$(stub gagged2 <<'EOS'
+echo "warning: rejected a tool call that requires confirmation. Running in non-interactive mode." >&2
+echo "blocked"
+EOS
+)"
+  reset_v
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/r3" \
+         --verify "$VCMD" --protect 'test_*.py' --retries 2 2>&1)"
+  want     "retry/a gagged agent is not retried pointlessly" "BLOCKED" "$out"
+  want_not "retry/no retry rounds were burned"               "retry round" "$out"
+  reset_v
+fi
+
+if match retry/bounded; then
+  out="$("$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --verify "$VCMD" --retries 9 2>&1)"
+  want "retry/refuses more than three rounds" "returns collapse after two" "$out"
+fi
+
 # ============================ DOCTOR PREFLIGHT ===============================
 echo
 echo "Preflight"
