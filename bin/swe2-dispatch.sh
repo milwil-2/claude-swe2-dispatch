@@ -582,8 +582,22 @@ if [[ -n "$VERIFY" && "$VERIFY_AFTER" -eq 0 && "$IS_GIT" == "1" && ${#PROTECT[@]
   fi
 fi
 
+# ---- Was the agent gagged rather than unable? --------------------------------
+# devin rejects any tool call needing confirmation when running non-interactively.
+# An approval-style rule in the agent's own AGENTS.md makes EDITS need confirmation,
+# so the agent analyses correctly and then cannot act. Reported as a plain failure
+# this is indistinguishable from the agent trying and failing -- it cost hours to
+# diagnose once, and it must never be silent again.
+BLOCKED=""
+if grep -q "requires confirmation" "$CTL/stderr.txt" 2>/dev/null; then BLOCKED=1; fi
+
 # ---- Verdict -----------------------------------------------------------------
-if [[ -z "$VERIFY" ]]; then VERDICT="UNVERIFIED (no acceptance command)"
+# A refusal means the run is incomplete regardless of whether anything changed --
+# keying this off "changed nothing" was wrong, since the acceptance command itself
+# can leave artifacts. If acceptance passed anyway, the normal verdict still wins.
+if [[ -n "$BLOCKED" && "${VERIFY_AFTER:-1}" -ne 0 ]]; then
+  VERDICT="BLOCKED (a tool call was refused for confirmation; the agent could not finish)"
+elif [[ -z "$VERIFY" ]]; then VERDICT="UNVERIFIED (no acceptance command)"
 elif [[ -n "$TIMED_OUT" ]]; then VERDICT="UNVERIFIED (timed out; work is partial)"
 elif [[ -n "$GAMED" ]]; then VERDICT="GAMED (passes as written, fails with the original protected files restored)"
 elif [[ "$VERIFY_AFTER" -ne 0 ]]; then VERDICT="NOT VERIFIED (acceptance command still fails)"
@@ -678,6 +692,13 @@ echo "workspace:  $WORKSPACE$BRANCH_LINE"
 [[ -n "$SESSION_ID" ]] && echo "session_id: $SESSION_ID   (resume: --resume $SESSION_ID)"
 echo "artifacts:  $OUT   (elapsed: ${ELAPSED}s)"
 [[ -n "$TIMED_OUT" ]] && echo "!! TIMED OUT after ${TIMEOUT}s and was killed -- any work below is PARTIAL !!"
+if [[ -n "$BLOCKED" ]]; then
+  echo "!! A TOOL CALL WAS REFUSED FOR CONFIRMATION !!"
+  echo "   devin cannot ask for approval in non-interactive mode, so the call was"
+  echo "   dropped. This is usually an approval rule in the agent's own rules file"
+  echo "   (~/.config/devin/AGENTS.md) treating file edits as needing a human."
+  echo "   The agent may have analysed correctly and then been unable to act."
+fi
 [[ "${ORPHANS:-0}" -gt 0 ]] && echo "!! $ORPHANS process(es) survived the kill; measurements may be incomplete !!"
 if [[ "$IS_GIT" == "1" && -s "$CTL/status.before" ]]; then
   echo "note:       the worktree was ALREADY dirty before this run"

@@ -498,7 +498,7 @@ echo "Verification by execution (the agent's claim is a hypothesis)"
 
 # A fixture whose acceptance genuinely fails first and can be gamed by editing the test.
 VWT=""
-if match verify; then
+if true; then
   VMAIN="$(new_repo vmain)"
   printf 'def div(a, b):\n    return a * b\n' > "$VMAIN/calc.py"
   cat > "$VMAIN/test_calc.py" <<'EOS'
@@ -681,6 +681,22 @@ EOS
 )" "$DISPATCH" --workspace "$VMAIN" --brief "$LAB/vbrief.md" --out "$LAB/n2" \
          --attempts 2 --verify "$VCMD" --protect 'test_*.py' 2>&1)"
   want "attempts/0-of-N is reported as one task-level failure" "NO attempt verified" "$out"
+fi
+
+if match blocked/gagged-agent; then
+  # An agent refused permission must never look like an agent that tried and failed.
+  S="$(stub gagged <<'EOS'
+echo "warning: rejected a tool call that requires confirmation. Running in non-interactive mode." >&2
+echo "I analysed the issue but could not proceed."
+EOS
+)"
+  reset_v
+  out="$(DEVIN_BIN="$S" "$DISPATCH" --workspace "$VWT" --brief "$LAB/vbrief.md" --out "$LAB/g1" \
+         --verify "$VCMD" --protect 'test_*.py' 2>&1)"
+  want     "blocked/a gagged agent is reported as BLOCKED" "BLOCKED" "$out"
+  want     "blocked/the cause is named"                    "AGENTS.md" "$out"
+  want_not "blocked/not misreported as an ordinary failure" "NOT VERIFIED (acceptance" "$out"
+  reset_v
 fi
 
 # ============================ ORCHESTRATION SAFETY ===========================
