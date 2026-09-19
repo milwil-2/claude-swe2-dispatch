@@ -340,7 +340,7 @@ if [[ "$RAW" != "1" ]]; then
     echo
     echo "- Write only inside the worktree. Writes elsewhere are blocked by the OS, not just by policy."
     echo "- Do NOT stage, commit, push, branch, or amend. \`git add\` will fail by design; that is expected, not a problem to solve. Leave your work as uncommitted changes."
-    echo "- Read-only \`git status\` and \`git diff\` are available. Do NOT mine git history, other branches, or the network for the answer: solve the task from the code in front of you."
+    echo "- Read-only git and the network are available. Looking up how this was solved elsewhere is fine; what matters is that the change is right for THIS codebase at THIS commit. Say where a borrowed approach came from."
     echo "- Change only what the task requires. No unrelated refactors, reformatting, or added comments on code you did not touch."
     echo "- Never weaken, skip, or delete a test to make things pass, and never hard-code for a specific test input."
     echo "- If the task cannot be done as specified -- the requirement conflicts with the tests, the spec is contradictory, or the environment is missing something you may not install -- STOP and report \`status: infeasible\` with the reason. That is a correct, useful outcome. Do not invent a workaround to appear successful."
@@ -643,7 +643,7 @@ if [[ -s "$CTL/actions.txt" ]]; then
     echo "repeated edits: $THRASH_N tool calls against one file -- thrashing; a green result here is ~1-in-3 an incomplete fix" >> "$CTL/signals.txt"
   fi
   if grep -qE 'git (log|show)|git diff [a-f0-9]{7,}|curl [^"]*github\.com' "$CTL/actions.txt" 2>/dev/null; then
-    echo "history/network mining: the trace contains git-history or upstream lookups -- the documented path to an answer that was not derived from the code" >> "$CTL/signals.txt"
+    echo "consulted outside sources: the trace contains git-history or upstream lookups. Not a defect -- but check the change fits this commit rather than a later refactor." >> "$CTL/signals.txt"
   fi
 fi
 if [[ -s "$CTL/metrics.json" ]] && command -v jq >/dev/null 2>&1; then

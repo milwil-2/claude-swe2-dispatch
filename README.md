@@ -85,8 +85,11 @@ Flags, not failures, computed free from the trace:
 
 - **Repeated edits to one file** — the best-supported signal. A green run with many
   redundant edits has roughly **1-in-3** odds of being an incomplete fix.
-- **History or network mining** (`git log`, `git show`, `curl github.com`) — the
-  documented path to an answer not derived from the code.
+- **Outside sources consulted** (`git log`, `git show`, `curl github.com`) — not a
+  defect. Looking up how something was solved elsewhere is ordinary engineering;
+  the flag exists so you check the change suits this commit rather than a later
+  refactor it was lifted from. (For *benchmarking* it matters differently — a
+  retrieved answer invalidates the measurement — so isolate the network there.)
 - **Long runs** — failures run roughly twice the length of successes.
 - **Protected paths touched**, and anything outside `--scope`.
 - **Size tripwires** — solve rates fall off a cliff past ~3 files or ~100 lines.
